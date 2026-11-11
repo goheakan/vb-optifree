@@ -128,6 +128,16 @@ La règle d'or : **ne jamais envoyer un secret à un modèle cloud gratuit**. Le
 
 Le ledger est stocké dans `~/.local/state/vb-optifree/quotas.json`. Il n'est **jamais** versionné.
 
+## Banc d'essai Docker
+
+Tant que les étapes ne sont pas stables, on ne lance pas `./install.sh` sur la machine. Le banc est à part :
+
+```bash
+./docker/smoke.sh
+```
+
+Il télécharge des images épinglées, lance Ollama et LiteLLM, joue les 12 tests du plugin, vérifie le routage `sensitive`, puis tout efface. Il ne monte pas `~/.config`, ne touche pas au service Ollama déjà présent, et ne publie le port `4000` que sur `127.0.0.1`. Aucun modèle n'est téléchargé : l'appel `sensitive` doit échouer côté Ollama, pas partir vers un cloud. Le GPU de la machine n'est pas passé aux conteneurs.
+
 ## Arborescence
 
 ```text
@@ -156,6 +166,9 @@ vb-optifree/
 │   │   └── commands.ts
 │   └── test/
 │       └── ledger.test.ts
+├── docker/
+│   ├── compose.yaml
+│   └── smoke.sh
 ├── docs/
 │   ├── plan.md
 │   └── initial-sketch.md

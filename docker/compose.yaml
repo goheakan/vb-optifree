@@ -1,0 +1,59 @@
+# Banc d'essai. Il ne monte aucun dossier de la machine (ni ~/.config, ni les
+# modèles Ollama déjà installés). Le port publié sur l'hôte est 127.0.0.1:4000.
+#
+# Ollama reste sur 127.0.0.1 à l'intérieur du conteneur : LiteLLM partage son
+# espace réseau et lui parle en 127.0.0.1:11434, comme le fichier de config
+# du dépôt. Ce port n'est pas publié sur l'hôte (l'Ollama de la machine
+# occupe déjà 11434).
+#
+# LiteLLM écoute 0.0.0.0 dans cet espace réseau parce que le relais Docker
+# n'atteint pas une écoute limitée à 127.0.0.1. La publication hôte reste
+# 127.0.0.1, donc le LAN ne voit pas le port.
+#
+# Images épinglées le 2026-11-11 (linux/amd64) :
+#   ghcr.io/berriai/litellm-non_root:v1.108.5
+#   ollama/ollama:latest à cette date
+
+name: vb-optifree-test
+
+services:
+  ollama:
+    image: ollama/ollama@sha256:a372a1c0d1e15b68e9521189785c3ca17795c26c2356f8b1b10122cfb59ed0d7
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+    ports:
+      - "127.0.0.1:4000:4000"
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - ollama-data:/root/.ollama
+
+  litellm:
+    image: ghcr.io/berriai/litellm-non_root@sha256:c83beb208285cee441c29abda606f572c40971156ef4f0880ff2bca301b94448
+    network_mode: service:ollama
+    depends_on:
+      - ollama
+    env_file:
+      - run/.env
+    volumes:
+      - ../config/litellm.config.yaml:/app/config.yaml:ro
+    command:
+      - --config
+      - /app/config.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4000"
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  ollama-data:

@@ -1127,6 +1127,28 @@ Correctifs versionnés avec cette section :
 - Actions GitHub épinglées par SHA. `npm audit` critique dans la CI.
 - Sauvegardes `.bak` de l'installeur en mode `600`.
 
+## 22. Banc d'essai Docker (11 nov. 2026)
+
+Décision : les étapes se valident dans Docker. `./install.sh` sur la machine
+attend que ce banc soit stable. Les étapes d'après (npm, hooks manquants,
+vibe-coding réel) attendent aussi.
+
+`./docker/smoke.sh` a été exécuté une fois avec succès :
+
+- 12 tests du plugin dans `node:22` (image épinglée, sources en lecture seule) ;
+- LiteLLM `v1.108.5` non-root et Ollama, images épinglées par digest ;
+- clé générée pour le banc, refusée si elle ne passe pas `check-litellm-env.sh`,
+  effacée à la sortie ;
+- `127.0.0.1:4000` seulement ; l'Ollama de l'hôte sur `11434` n'est pas repris ;
+- `/v1/models` sans clé : 401 ; avec la clé : alias `local-coder` et `sensitive` ;
+- un appel `sensitive` répond HTTP 404 côté Ollama (modèle non téléchargé) et
+  ne cite aucun hôte cloud ;
+- la clé et le prompt de test sont absents des journaux ;
+- conteneurs, volume et fichier de clé supprimés à la fin.
+
+Hors de ce banc : téléchargement d'un modèle, GPU, OpenCode, clés cloud, et
+installation sur la machine.
+
 ## Annexe — sources consultées (11 nov. 2026)
 
 - OpenCode Console / Zen : `opencode.ai/docs/zen`

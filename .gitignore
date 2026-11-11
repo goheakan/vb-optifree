@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 *.local
+docker/run/
 
 # Données d'exécution
 quotas.json
