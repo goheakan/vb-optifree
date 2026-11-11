@@ -4,7 +4,7 @@
  * dans ~/.config/litellm/.env.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -93,10 +93,48 @@ export async function loadLedger(path: string = ledgerPath()): Promise<Ledger> {
 
 export async function saveLedger(ledger: Ledger, path: string = ledgerPath()): Promise<void> {
   const dir = dirname(path);
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
   const tmp = join(dir, `.quotas.${process.pid}.${Date.now()}.tmp`);
   await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, { mode: 0o600 });
+  await chmod(tmp, 0o600);
   await rename(tmp, path);
+  await chmod(path, 0o600);
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
+
+/**
+ * La clé maître ne part que vers la boucle locale.
+ * `localhost` est refusé : il dépend de la résolution DNS / de /etc/hosts.
+ * L'URL renvoyée à l'appelant n'est jamais recopiée dans un message d'erreur.
+ */
+export function assertLoopbackBaseUrl(baseUrl: string): URL {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("LiteLLM : URL refusée");
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new Error("LiteLLM : URL refusée");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("LiteLLM : URL refusée");
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!LOOPBACK_HOSTS.has(host)) {
+    throw new Error("LiteLLM : URL refusée");
+  }
+  return url;
+}
+
+export function isUsableMasterKey(key: string | undefined): boolean {
+  if (!key) return false;
+  if (key.length < 16) return false;
+  if (/change-me/i.test(key)) return false;
+  if (/[\r\n]/.test(key)) return false;
+  return true;
 }
 
 function headerNumber(headers: Headers, name: string): number | null {
@@ -178,8 +216,12 @@ interface OpenRouterResponse {
 
 export async function fetchOpenRouterKey(apiKey: string): Promise<OpenRouterKeyInfo> {
   const response = await fetch("https://openrouter.ai/api/v1/key", {
+    redirect: "manual",
     headers: { Authorization: `Bearer ${apiKey}` },
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error("OpenRouter /api/v1/key : redirection refusée");
+  }
   if (!response.ok) {
     throw new Error(`OpenRouter /api/v1/key : HTTP ${response.status}`);
   }
@@ -209,9 +251,17 @@ export async function fetchLiteLLMKeyInfo(
   baseUrl: string,
   masterKey: string,
 ): Promise<LiteLLMKeyInfo> {
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/key/info`, {
+  if (!isUsableMasterKey(masterKey)) {
+    throw new Error("LiteLLM : clé maître refusée");
+  }
+  const url = assertLoopbackBaseUrl(baseUrl);
+  const response = await fetch(new URL("/key/info", url.origin), {
+    redirect: "manual",
     headers: { Authorization: `Bearer ${masterKey}` },
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error("LiteLLM /key/info : redirection refusée");
+  }
   if (!response.ok) {
     throw new Error(`LiteLLM /key/info : HTTP ${response.status}`);
   }
@@ -260,6 +310,10 @@ export async function refreshLedger(
 
   if (options.litellmBaseUrl && options.litellmMasterKey) {
     try {
+      if (!isUsableMasterKey(options.litellmMasterKey)) {
+        throw new Error("LiteLLM : clé maître refusée");
+      }
+      assertLoopbackBaseUrl(options.litellmBaseUrl);
       const info = await fetchLiteLLMKeyInfo(options.litellmBaseUrl, options.litellmMasterKey);
       ledger = updatePool(ledger, "litellm", {
         limits: { budget_usd: info.budget_usd },

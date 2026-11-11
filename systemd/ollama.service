@@ -11,7 +11,10 @@ ExecStart=/usr/bin/env ollama serve
 Environment="OLLAMA_HOST=127.0.0.1:11434"
 Restart=on-failure
 RestartSec=5
+UMask=0077
 NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=default.target

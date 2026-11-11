@@ -20,6 +20,7 @@ info() { printf '%s[info]%s %s\n' "$C_INFO" "$C_OFF" "$*"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 LITELLM_DIR="$CONFIG_DIR/litellm"
 OPENCODE_DIR="$CONFIG_DIR/opencode"
@@ -44,13 +45,53 @@ http_check() {
     return 0
   fi
   local args=(-fsS --max-time 3 -o /dev/null)
+  local hdr="" old_umask=""
   if [ -n "$auth" ]; then
-    args+=(-H "Authorization: Bearer $auth")
+    # Le secret est dans un fichier 600, pas dans la ligne de commande de curl.
+    old_umask="$(umask)"
+    umask 077
+    hdr="$(mktemp)"
+    umask "$old_umask"
+    chmod 600 "$hdr"
+    printf 'Authorization: Bearer %s\n' "$auth" > "$hdr"
+    args+=(-H "@${hdr}")
   fi
-  if curl "${args[@]}" "$url" >/dev/null 2>&1; then
+  local rc=0
+  curl "${args[@]}" "$url" >/dev/null 2>&1 || rc=$?
+  if [ -n "$hdr" ]; then
+    rm -f "$hdr"
+  fi
+  if [ "$rc" -eq 0 ]; then
     pass "$label répond ($url)"
   else
     warn "$label ne répond pas ($url)"
+  fi
+}
+
+loopback_listener() {
+  local port="$1" label="$2"
+  if ! have ss; then
+    warn "ss absent : écoute de $label non vérifiée"
+    return 0
+  fi
+  local lines
+  lines="$(ss -H -ltn "sport = :${port}" 2>/dev/null || true)"
+  if [ -z "$lines" ]; then
+    warn "$label n'écoute pas sur le port ${port}"
+    return 0
+  fi
+  local bad=0 line addr
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    addr="$(printf '%s\n' "$line" | awk '{print $4}')"
+    if [ "$addr" = "127.0.0.1:${port}" ] || [ "$addr" = "[::1]:${port}" ]; then
+      continue
+    fi
+    fail "$label écoute sur ${addr} (attendu : 127.0.0.1 ou ::1)"
+    bad=1
+  done <<< "$lines"
+  if [ "$bad" -eq 0 ]; then
+    pass "$label n'écoute que sur la boucle locale"
   fi
 }
 
@@ -82,11 +123,16 @@ fi
 
 if [ -f "$LITELLM_DIR/.env" ]; then
   pass "fichier .env présent"
-  local_mode="$(stat -c '%a' "$LITELLM_DIR/.env" 2>/dev/null || printf '?')"
-  if [ "$local_mode" = "600" ]; then
-    pass ".env en mode 600"
+  check_script="$SCRIPT_DIR/scripts/check-litellm-env.sh"
+  check_out=""
+  if [ -x "$check_script" ]; then
+    if check_out="$(LITELLM_ENV_FILE="$LITELLM_DIR/.env" "$check_script" 2>&1)"; then
+      pass "secrets LiteLLM : mode 600 et clé maître utilisable"
+    else
+      fail "secrets LiteLLM : ${check_out}"
+    fi
   else
-    warn ".env en mode $local_mode (recommandé : 600)"
+    fail "contrôle des secrets introuvable : $check_script"
   fi
   if grep -Eq '^(GROQ|GEMINI|OPENROUTER|DEEPSEEK)_API_KEY=.+' "$LITELLM_DIR/.env" 2>/dev/null; then
     pass "au moins une clé API renseignée"
@@ -114,6 +160,30 @@ if [ -f "$OPENCODE_DIR/opencode.json" ] && have jq; then
   else
     warn "provider litellm absent de opencode.json"
   fi
+  api_key="$(jq -r '.provider.litellm.options.apiKey // empty' "$OPENCODE_DIR/opencode.json" 2>/dev/null || true)"
+  cfg_mode="$(stat -c '%a' "$OPENCODE_DIR/opencode.json" 2>/dev/null || printf '?')"
+  case "$api_key" in
+    ""|"{env:LITELLM_MASTER_KEY}")
+      pass "opencode.json ne contient pas la clé en clair"
+      ;;
+    *)
+      api_key_lc="$(printf '%s' "$api_key" | tr '[:upper:]' '[:lower:]')"
+      case "$api_key_lc" in
+        *change-me*)
+          fail "opencode.json contient encore un placeholder de clé"
+          ;;
+        *)
+          if [ "$cfg_mode" = "600" ]; then
+            pass "opencode.json contient une clé locale et est en mode 600"
+          else
+            fail "opencode.json contient une clé et n'est pas en mode 600 (mode ${cfg_mode})"
+          fi
+          ;;
+      esac
+      unset api_key_lc
+      ;;
+  esac
+  unset api_key
   if jq -e '.plugins | index("'"$PLUGIN_DIR"'")' "$OPENCODE_DIR/opencode.json" >/dev/null 2>&1; then
     pass "plugin référencé dans opencode.json"
   else
@@ -142,6 +212,10 @@ if have systemctl && systemctl --user show-environment >/dev/null 2>&1; then
 else
   warn "systemd utilisateur indisponible"
 fi
+
+info "Écoute réseau"
+loopback_listener 4000 "LiteLLM"
+loopback_listener 11434 "Ollama"
 
 info "Endpoints"
 http_check "$OLLAMA_URL/api/tags" "Ollama"

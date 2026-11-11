@@ -91,6 +91,8 @@ backup_if_exists() {
     local stamp
     stamp="$(date +%Y%m%d-%H%M%S)"
     run cp -a "$target" "$target.bak.$stamp"
+    # Une sauvegarde peut contenir la clé déjà injectée.
+    run chmod 600 "$target.bak.$stamp"
     warn "sauvegarde : $target.bak.$stamp"
   fi
 }
@@ -122,6 +124,33 @@ read_master_key() {
     | head -n1 | cut -d= -f2- || true
 }
 
+write_master_key() {
+  # La clé passe par l'environnement du processus awk, pas par ses arguments.
+  local key="$1" tmp old_umask
+  case "$key" in
+    *$'\n'*|*$'\r'*)
+      err "clé maître invalide"
+      return 1
+      ;;
+  esac
+  old_umask="$(umask)"
+  umask 077
+  tmp="$(mktemp "$LITELLM_DIR/.env.XXXXXX")"
+  if ! LITELLM_MASTER_KEY="$key" awk '
+    BEGIN { key = ENVIRON["LITELLM_MASTER_KEY"]; replaced = 0 }
+    /^LITELLM_MASTER_KEY=/ { print "LITELLM_MASTER_KEY=" key; replaced = 1; next }
+    { print }
+    END { if (replaced == 0) print "LITELLM_MASTER_KEY=" key }
+  ' "$LITELLM_DIR/.env" > "$tmp"; then
+    rm -f "$tmp"
+    umask "$old_umask"
+    return 1
+  fi
+  chmod 600 "$tmp"
+  mv "$tmp" "$LITELLM_DIR/.env"
+  umask "$old_umask"
+}
+
 ensure_master_key() {
   local key
   key="$(read_master_key)"
@@ -135,7 +164,7 @@ ensure_master_key() {
       if [ "$DRY_RUN" -eq 1 ]; then
         printf '[dry-run] générer une clé LITELLM_MASTER_KEY\n'
       else
-        sed -i "s|^LITELLM_MASTER_KEY=.*|LITELLM_MASTER_KEY=$key|" "$LITELLM_DIR/.env"
+        write_master_key "$key"
         ok "clé LiteLLM générée dans $LITELLM_DIR/.env"
       fi
       ;;
@@ -179,7 +208,7 @@ check_prerequisites() {
   fi
   if ! have uv; then
     err "uv est requis pour installer LiteLLM sans sudo."
-    print_system_hint "uv" "sudo pacman -S uv  (ou curl -LsSf https://astral.sh/uv/install.sh | sh)"
+    print_system_hint "uv" "sudo pacman -S uv  (https://docs.astral.sh/uv/ — ne pas piper un installeur sans l'avoir lu)"
     missing_required=1
   fi
   if ! have node; then
@@ -231,6 +260,9 @@ install_configs() {
 
   copy_template "$REPO_DIR/config/litellm.config.yaml" "$LITELLM_DIR/config.yaml" 644
   copy_template "$REPO_DIR/config/.env.example" "$LITELLM_DIR/.env" 600
+  # Le contrôle est à nous : on le remplace à chaque installation.
+  run cp "$REPO_DIR/scripts/check-litellm-env.sh" "$LITELLM_DIR/check-env.sh"
+  run chmod 700 "$LITELLM_DIR/check-env.sh"
 
   if [ -f "$LITELLM_DIR/.env" ]; then
     run chmod 600 "$LITELLM_DIR/.env"
@@ -282,12 +314,12 @@ merge_opencode_config() {
   # générée dans opencode.json, et on protège le fichier (secret local).
   local tmp
   tmp="$(mktemp)"
-  if jq --slurpfile tpl "$REPO_DIR/config/opencode.json" \
-        --arg plugin "$PLUGIN_DIR" \
-        --arg key "$MASTER_KEY" '
+  # VB_LITELLM_KEY est dans l'environnement de jq, pas dans sa ligne de commande.
+  if VB_LITELLM_KEY="$MASTER_KEY" jq --slurpfile tpl "$REPO_DIR/config/opencode.json" \
+        --arg plugin "$PLUGIN_DIR" '
         .provider = (.provider // {}) |
         .provider.litellm = $tpl[0].provider.litellm |
-        (if $key != "" then .provider.litellm.options.apiKey = $key else . end) |
+        (if env.VB_LITELLM_KEY != "" then .provider.litellm.options.apiKey = env.VB_LITELLM_KEY else . end) |
         .plugins = (((.plugins // []) | map(select(. != "./opencode-quota" and . != $plugin))) + [$plugin] | unique)
       ' "$cfg" > "$tmp"; then
     mv "$tmp" "$cfg"
@@ -316,6 +348,11 @@ install_plugin() {
     if confirm "Installer les dépendances npm du plugin dans $PLUGIN_DIR ?"; then
       ( cd "$PLUGIN_DIR" && npm ci --omit=dev --no-audit --no-fund )
       ok "dépendances du plugin installées"
+      if ( cd "$PLUGIN_DIR" && npm audit --omit=dev --audit-level=critical ); then
+        ok "npm audit : aucune vulnérabilité critique"
+      else
+        warn "npm audit signale au moins une vulnérabilité critique"
+      fi
     else
       warn "dépendances non installées : le plugin peut ne pas se charger."
     fi

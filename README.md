@@ -33,7 +33,7 @@ Le principe : **cumuler les quotas gratuits** de plusieurs fournisseurs cloud, e
         ▼              ▼
 ┌──────────────┐  ┌──────────────────────────────┐
 │ Ollama       │  │ Cloud gratuit                 │
-│ 127.0.0.1:   │  │ Groq / Gemini / OpenRouter    │
+│ 127.0.0.1:   │  │ Groq / Gemini / DeepSeek      │
 │ 11434        │  │ (puis DeepSeek en secours)    │
 └──────────────┘  └──────────────────────────────┘
 ```
@@ -110,7 +110,7 @@ Le `install.sh` ne lance pas les commandes d'installation système : il les affi
 | Sensibilité | Alias OpenCode | Cible LiteLLM |
 |---|---|---|
 | 🔴 Secret / client / santé / juridique | `sensitive` | `local-coder` (Ollama uniquement, **aucun fallback cloud**) |
-| 🟡 Code public / questions générales | `default` | Groq gratuit → Gemini → OpenRouter → DeepSeek → local |
+| 🟡 Code public / questions générales | `default` | Groq gratuit → Gemini → DeepSeek → local |
 | 🔵 Gros contexte | `default` (ou `cloud`) | Gemini / DeepSeek 1M ctx |
 | 💰 Quotas épuisés | — | `deepseek-flash` (payant quasi-gratuit) → `local-coder` |
 
@@ -165,12 +165,22 @@ vb-optifree/
 
 ## Sécurité et vie privée
 
-- LiteLLM écoute uniquement sur `127.0.0.1`.
+- LiteLLM écoute uniquement sur `127.0.0.1`. `doctor.sh` échoue si LiteLLM
+  ou Ollama écoutent ailleurs.
 - Les clés sont dans `~/.config/litellm/.env` (mode `600`), jamais dans le dépôt.
-- `install.sh` génère une `LITELLM_MASTER_KEY` locale, l'injecte dans
-  `~/.config/opencode/opencode.json` et passe ce fichier en mode `600` : il
-  contient un secret local, ne le versionne pas.
-- `turn_off_message_logging: true` dans LiteLLM.
+- `scripts/check-litellm-env.sh` refuse le démarrage si ce fichier n'est pas
+  en mode `600`, ou si la clé maître est vide, trop courte, ou encore un
+  placeholder. systemd l'appelle avant LiteLLM.
+- `install.sh` génère une `LITELLM_MASTER_KEY` locale sans la placer dans
+  la ligne de commande. Il l'injecte dans `~/.config/opencode/opencode.json`
+  et passe ce fichier en mode `600` : il contient un secret local, ne le
+  versionne pas. Les sauvegardes `.bak` sont aussi en mode `600`.
+- `turn_off_message_logging: true`, `redact_user_api_key_info: true` et
+  `store_prompts_in_spend_logs: false` dans LiteLLM.
+- Le plugin n'envoie la clé maître qu'à `127.0.0.1` ou `::1`, et ne suit
+  pas les redirections. `localhost` est refusé.
+- OpenRouter n'est pas dans la chaîne tant que son modèle n'est pas un
+  identifiant réel dans `config/litellm.config.yaml`.
 - Le ledger et les scripts de session sont ignorés par Git.
 - Aucune donnée personnelle (nom, e-mail, hostname, GPU, ID de session) n'est nécessaire au fonctionnement.
 - Avant toute publication : `grep` PII, `gitleaks`, `shellcheck`, `npm audit`.

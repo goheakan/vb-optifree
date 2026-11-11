@@ -1080,14 +1080,24 @@ npm ci && npm audit --omit=dev
 
 ### 21.6 Checklist de publication
 
-- [ ] `docs/plan.md` assaini (aucun hostname/username/session/GPU exact).
-- [ ] `opencode_session.sh` et `grok_session.sh` réel absents / ignorés.
-- [ ] `.env.example` sans valeurs réelles.
-- [ ] `gitleaks` : 0 finding.
-- [ ] `git log` : auteurs en `@users.noreply.github.com`.
-- [ ] `LICENSE` MIT + `NOTICE` tiers (OpenCode, LiteLLM, Ollama).
-- [ ] `README` : avertissement « ne committez jamais `.env` ».
-- [ ] Revue manuelle du diff avant `push`.
+Reprise du 11 nov. 2026, après le commit `12948cf` (travail DeepSeek V4.1 Flash).
+Les tours suivants, sur des modèles Qwen locaux, ne font pas partie de ce dépôt.
+
+- [x] `docs/plan.md` assaini (aucun hostname/username/session/GPU exact).
+- [x] `opencode_session.sh` et `grok_session.sh` réel absents / ignorés.
+- [x] `.env.example` sans valeurs réelles (`LITELLM_MASTER_KEY=change-me`, clés vides).
+- [ ] `gitleaks` en local : binaire absent sur la machine au moment du push.
+      Le job CI `secrets` le lance sur GitHub.
+- [x] `git log` : `goheakan <goheakan@users.noreply.github.com>`.
+- [x] `LICENSE` MIT + `NOTICE` tiers (OpenCode, LiteLLM, Ollama).
+- [x] `README` : avertissement « ne committez jamais `.env` ».
+- [x] Contrôles avant push : `git grep` PII vide, `shellcheck` propre,
+      `npm test` 10/10, `tsc --noEmit` propre.
+      `npm audit --omit=dev` : 24 modérées transitives via `@opencode/plugin`,
+      aucune haute, pas de correctif amont (déjà noté dans le README).
+- [x] Dépôt public : https://github.com/goheakan/vb-optifree (`main`).
+      Le premier commit est `12948cf`. Le durcissement suit dans le commit
+      qui versionne cette checklist.
 
 ### 21.7 Note sur la publication npm
 
@@ -1097,6 +1107,25 @@ npm ci && npm audit --omit=dev
 - `npm audit` + `npm provenance` (optionnel).
 
 ---
+
+## 21.8 Durcissement (reprise sécurité, 11 nov. 2026)
+
+Correctifs versionnés avec cette section :
+
+- La clé maître n'est plus passée à `sed`, `jq` ou `curl` par les arguments.
+- Démarrage refusé si `.env` n'est pas en mode `600` ou si la clé est un
+  placeholder (`scripts/check-litellm-env.sh`, `ExecStartPre`).
+- Le plugin n'envoie cette clé qu'à `127.0.0.1` ou `::1`, sans suivre
+  une redirection. Une clé placeholder n'est pas envoyée.
+- Ledger en mode `600`, répertoire d'état en mode `700`.
+- `doctor.sh` échoue si LiteLLM ou Ollama écoutent hors boucle locale,
+  ou si `opencode.json` contient une clé sans mode `600`.
+- OpenRouter retiré de la chaîne active tant que le modèle est un
+  placeholder : un identifiant faux ne doit pas recevoir le prompt.
+- LiteLLM : pas de stockage des prompts, rédaction des messages et des
+  infos de clé, `trusted_proxy_ranges: []`.
+- Actions GitHub épinglées par SHA. `npm audit` critique dans la CI.
+- Sauvegardes `.bak` de l'installeur en mode `600`.
 
 ## Annexe — sources consultées (11 nov. 2026)
 

@@ -8,12 +8,15 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h
 EnvironmentFile=%h/.config/litellm/.env
+ExecStartPre=%h/.config/litellm/check-env.sh
 ExecStart=%h/.local/bin/litellm --config %h/.config/litellm/config.yaml --host 127.0.0.1 --port 4000
 Restart=on-failure
 RestartSec=5
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=default.target
