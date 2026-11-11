@@ -1,8 +1,9 @@
 # opencode-quota
 
-Petit plugin OpenCode qui affiche l'état des quotas des pools gratuits et fait
-un pré-vol avant une tâche coûteuse. Il **n'effectue aucun routage** : le
-routage, les clés et les fallbacks restent dans LiteLLM.
+Petit plugin OpenCode qui affiche l'état des quotas et fait un pré-vol avant
+une tâche coûteuse. Avant l'envoi, il choisit le premier pool encore ouvert.
+L'ordre par défaut est Zen, Groq, DeepSeek, puis Gemini. `/quote order` le
+change. Les clés et le repli pendant la requête restent dans LiteLLM.
 
 ## Installation
 
@@ -41,27 +42,28 @@ Puis ajoute le chemin absolu du plugin dans `plugins` de ta config OpenCode :
 | `/quota check <tokens>` | pré-vol : OK / ⚠ / ⛔ |
 | `/quota policy` | rappelle la politique de routage |
 | `/quota reset <pool>` | remet les compteurs du pool à zéro |
+| `/quota order` | affiche ou change l'ordre des pools |
+| `/quote order` | même action |
+| `/quote order groq deepseek gemini` | enregistre cet ordre |
 
 ## Ledger
 
 Le fichier `~/.local/state/vb-optifree/quotas.json` contient les limites, les
-consommations, la date de reset et la source de chaque pool. Il est créé au
-premier usage et n'est jamais versionné.
+consommations, la date de reset et la source de chaque pool. La même copie est
+écrite dans le stockage du plugin (`ctx.storage`). Si ce stockage échoue, le
+fichier suffit. Il est créé au premier usage et n'est jamais versionné.
 
 ## Sources de données
 
-- **Groq** : en-têtes `x-ratelimit-*` des réponses.
-- **OpenRouter** : `GET https://openrouter.ai/api/v1/key`.
-- **LiteLLM** : `GET /key/info` (spend) et `/health`.
-- **Gemini** : saisie manuelle (les quotas ne sont pas exposés par l'API).
-- **Ollama** : illimité par construction.
+- **Zen, Groq, Gemini, DeepSeek** : en-têtes `x-ratelimit-*` quand ils sont relayés. Un HTTP 200 sans en-tête compte une requête. Un HTTP 429 bloque le pool jusqu'au `retry-after`, sinon 24 h.
+- **OpenRouter** : `GET https://openrouter.ai/api/v1/key`. Hors chaîne tant que l'identifiant `:free` n'est pas fixé.
+- **LiteLLM** : `GET /key/info` (spend).
 
 ## Limites
 
-- OpenCode V2 ne permet pas à un plugin de changer de provider par requête ;
-  le fallback inter-fournisseurs est assuré par LiteLLM.
+- Le changement de fournisseur (Zen vers LiteLLM) passe par `session.switchModel`. Dans LiteLLM, `model.resolve` réécrit seulement le modèle du même fournisseur.
 - Le pré-vol est **non bloquant** : il affiche un avertissement, il n'empêche
-  pas l'envoi.
+  pas l'envoi. Les budgets LiteLLM restent le vrai arrêt.
 - Les noms de modèles et les quotas gratuits évoluent : adapte
   `config/litellm.config.yaml` et le ledger.
 

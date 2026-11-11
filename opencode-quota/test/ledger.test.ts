@@ -5,6 +5,7 @@ import {
   addUsage,
   emptyLedger,
   formatDashboard,
+  noteHttpResult,
   preflight,
   remainingPercent,
   resetIfNeeded,
@@ -16,8 +17,9 @@ import { estimateTokens, formatTokens, parseTokenArg } from "../src/estimate";
 test("un ledger vide a des pools connus et un statut ok", () => {
   const ledger = emptyLedger(new Date("2026-11-11T00:00:00Z"));
   assert.ok(ledger.pools.groq);
-  assert.ok(ledger.pools.ollama);
-  assert.equal(statusFor(ledger.pools.ollama), "ok");
+  assert.ok(ledger.pools.zen);
+  assert.equal(statusFor(ledger.pools.zen), "unknown");
+  assert.equal(statusFor(ledger.pools.gemini), "unknown");
   assert.equal(ledger.version, 1);
 });
 
@@ -70,7 +72,8 @@ test("le dashboard contient les pools et le statut", () => {
   const ledger = emptyLedger();
   const text = formatDashboard(ledger);
   assert.match(text, /groq/);
-  assert.match(text, /ollama/);
+  assert.match(text, /zen/);
+  assert.match(text, /deepseek/);
   assert.match(text, /Statut/);
 });
 
@@ -95,6 +98,30 @@ test("parseTokenArg accepte 12k et 1.5m", () => {
   assert.equal(parseTokenArg("1.5m"), 1_500_000);
   assert.equal(parseTokenArg("12000"), 12_000);
   assert.equal(parseTokenArg("abc"), null);
+});
+
+test("un 429 bloque Zen même sans plafond, et le reset l'efface", () => {
+  const ledger = emptyLedger(new Date("2026-11-11T00:00:00Z"));
+  const blocked = noteHttpResult(ledger, "zen", { status: 429, usage: {} }, new Date("2026-11-11T01:00:00Z"));
+  assert.equal(statusFor(blocked.pools.zen), "blocked");
+  assert.equal(blocked.pools.zen.reset_at, "2026-11-12T01:00:00.000Z");
+  const reset = resetIfNeeded(blocked, new Date("2026-11-12T02:00:00Z"));
+  assert.equal(reset.pools.zen.forced_status, undefined);
+  assert.equal(statusFor(reset.pools.zen), "unknown");
+});
+
+test("les en-têtes remplacent la consommation, un 200 sans en-tête l'incrémente", () => {
+  const ledger = emptyLedger();
+  ledger.pools.groq.used = { requests_today: 4, tokens_today: 50 };
+  const replaced = noteHttpResult(ledger, "groq", {
+    status: 200,
+    usage: { requests_today: 10, tokens_today: 80 },
+  });
+  assert.equal(replaced.pools.groq.used?.requests_today, 10);
+  assert.equal(replaced.pools.groq.used?.tokens_today, 80);
+  const once = noteHttpResult(replaced, "gemini", { status: 200, usage: {} });
+  const twice = noteHttpResult(once, "gemini", { status: 200, usage: {} });
+  assert.equal(twice.pools.gemini.used?.requests_today, 2);
 });
 
 test("formatTokens reste lisible", () => {

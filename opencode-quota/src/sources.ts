@@ -16,6 +16,7 @@ import {
   type Pool,
   type PoolUsed,
 } from "./ledger";
+import { applyLiteLLMRoute } from "./route";
 
 export interface RefreshOptions {
   openRouterKey?: string;
@@ -127,6 +128,18 @@ export function assertLoopbackBaseUrl(baseUrl: string): URL {
     throw new Error("LiteLLM : URL refusée");
   }
   return url;
+}
+
+/**
+ * Délai annoncé par un 429 (retryAfterMs). Rien si le champ est absent :
+ * l'appelant retombe alors sur 24 h.
+ */
+export function resetFromUnknownError(error: unknown, now: Date = new Date()): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  const raw = record.retryAfterMs ?? record.retry_after_ms;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return new Date(now.getTime() + raw).toISOString();
 }
 
 export function isUsableMasterKey(key: string | undefined): boolean {
@@ -284,6 +297,85 @@ function updatePool(ledger: Ledger, id: string, patch: Partial<Pool>): Ledger {
     used: { ...(current.used ?? {}), ...(patch.used ?? {}) },
   };
   return { ...ledger, pools: { ...ledger.pools, [id]: next } };
+}
+
+export const LEDGER_STORAGE_KEY = "ledger";
+
+export interface LedgerStore {
+  get(key: string): Promise<unknown>;
+  set(key: string, value: unknown): Promise<void>;
+}
+
+function normalizeLedger(parsed: Ledger): Ledger {
+  return {
+    ...emptyLedger(),
+    ...parsed,
+    pools: { ...emptyLedger().pools, ...parsed.pools },
+    history: parsed.history ?? [],
+  };
+}
+
+/**
+ * Le fichier reste la copie de secours. Si le stockage du plugin est illisible,
+ * on revient au fichier. La copie la plus récente l'emporte.
+ */
+export async function loadDurableLedger(
+  store?: LedgerStore | null,
+  path: string = ledgerPath(),
+): Promise<Ledger> {
+  const file = await loadLedger(path);
+  if (!store) return file;
+  try {
+    const raw = await store.get(LEDGER_STORAGE_KEY);
+    if (!isLedger(raw)) return file;
+    const stored = normalizeLedger(raw);
+    const fileMs = Date.parse(file.updated_at);
+    const storedMs = Date.parse(stored.updated_at);
+    if (Number.isNaN(storedMs)) return file;
+    if (Number.isNaN(fileMs) || storedMs >= fileMs) return stored;
+    return file;
+  } catch {
+    return file;
+  }
+}
+
+export function litellmConfigPath(): string {
+  return join(configDir(), "litellm", "config.yaml");
+}
+
+/**
+ * Réécrit seulement l'alias et les replis. Le fichier absent n'est pas créé :
+ * l'ordre du plugin reste valable sans passerelle installée.
+ */
+export async function saveLiteLLMRoute(route: readonly string[]): Promise<"updated" | "absent"> {
+  const path = litellmConfigPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return "absent";
+  }
+  const next = applyLiteLLMRoute(raw, route);
+  const tmp = join(dirname(path), `.config.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(tmp, next, { mode: 0o644 });
+  await chmod(tmp, 0o644);
+  await rename(tmp, path);
+  await chmod(path, 0o644);
+  return "updated";
+}
+
+export async function saveDurableLedger(
+  ledger: Ledger,
+  store?: LedgerStore | null,
+  path: string = ledgerPath(),
+): Promise<void> {
+  await saveLedger(ledger, path);
+  if (!store) return;
+  try {
+    await store.set(LEDGER_STORAGE_KEY, JSON.parse(JSON.stringify(ledger)) as unknown);
+  } catch {
+    // Le fichier vient d'être écrit : le prochain chargement le reprendra.
+  }
 }
 
 export async function refreshLedger(

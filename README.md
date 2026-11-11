@@ -1,16 +1,15 @@
 # vb-optifree — Vibe-Coding Optimal Free
 
-> Une seule CLI, tout FLOSS, du cloud gratuit quand c'est possible, du local quand c'est sensible.
+> Une seule CLI, tout FLOSS, le plus longtemps possible sur des quotas gratuits.
 
-`vb-optifree` assemble trois briques libres pour faire du vibe-coding à coût quasi nul :
+`vb-optifree` assemble des briques libres pour faire du vibe-coding à coût quasi nul :
 
 | Brique | Rôle | Licence |
 |---|---|---|
-| [OpenCode](https://opencode.ai) | CLI agent de vibe-coding | MIT |
+| [OpenCode](https://opencode.ai) | CLI agent de vibe-coding, et pool Zen free | MIT |
 | [LiteLLM](https://github.com/BerriAI/litellm) | passerelle OpenAI-compatible : routage, fallbacks, quotas, spend | MIT |
-| [Ollama](https://ollama.com) | modèles locaux, privés et hors ligne | MIT |
 
-Le principe : **cumuler les quotas gratuits** de plusieurs fournisseurs cloud, et **basculer en local** dès qu'un contenu est sensible. LiteLLM est le socle de routage ; un petit plugin OpenCode (`opencode-quota`) affiche l'état des quotas et fait le pré-vol.
+Le principe : **cumuler les quotas** de plusieurs fournisseurs. L'ordre par défaut est Zen, Groq, DeepSeek, puis Gemini. DeepSeek est payant et passe avant Gemini. Le plugin `opencode-quota` choisit le pool encore ouvert avant l'envoi. Tu changes l'ordre dans OpenCode avec `/quote order`. Ollama viendra après, pour le contenu sensible.
 
 ## Architecture
 
@@ -18,24 +17,22 @@ Le principe : **cumuler les quotas gratuits** de plusieurs fournisseurs cloud, e
 ┌──────────────────────────────┐
 │ OpenCode (CLI, MIT)          │
 │  - agent de code             │
-│  - commandes /quota          │
+│  - commandes /quota /quote   │
 └──────────────┬───────────────┘
                │ OpenAI-compatible
                ▼
 ┌──────────────────────────────┐
+│ OpenCode Zen free            │
+│  (sans clé, dans OpenCode)   │
+└──────────────┬───────────────┘
+               │ si le pool est bloqué
+               ▼
+┌──────────────────────────────┐
 │ LiteLLM (127.0.0.1:4000)     │
-│  - alias default / sensitive │
-│  - fallbacks, retries        │
+│  - alias default             │
+│  - Groq → DeepSeek → Gemini  │
 │  - clés providers            │
-│  - spend tracking            │
-└───────┬──────────────┬───────┘
-        │              │
-        ▼              ▼
-┌──────────────┐  ┌──────────────────────────────┐
-│ Ollama       │  │ Cloud gratuit                 │
-│ 127.0.0.1:   │  │ Groq / Gemini / DeepSeek      │
-│ 11434        │  │ (puis DeepSeek en secours)    │
-└──────────────┘  └──────────────────────────────┘
+└──────────────────────────────┘
 ```
 
 ## Prérequis
@@ -43,9 +40,18 @@ Le principe : **cumuler les quotas gratuits** de plusieurs fournisseurs cloud, e
 - Linux (testé sur Arch Linux ; les commandes d'installation sont indiquées pour pacman/AUR).
 - [OpenCode](https://opencode.ai) installé.
 - [uv](https://docs.astral.sh/uv/) pour installer LiteLLM sans `sudo`.
-- [Ollama](https://ollama.com) installé, avec la variante GPU adaptée (voir plus bas).
 - `git`, `node` (≥ 22.19), `npm`, `jq`, `curl`.
-- Un GPU AMD ou NVIDIA est recommandé pour le local ; le CPU fonctionne en secours.
+- Ollama et un GPU ne sont pas requis pour ce chemin.
+
+Si `node -v` est inférieur à 22.19 et que Node vient de [nvm](https://github.com/nvm-sh/nvm), lance ces commandes dans le terminal où `nvm` existe, puis ouvre un nouveau terminal :
+
+```bash
+nvm install 22
+nvm alias default 22
+node -v
+```
+
+`nvm install 22` prend la dernière publication de la branche 22. Le 11 nov. 2026, c'est la 22.23.5. Un Node installé par le gestionnaire de paquets de la distribution se met à jour avec le reste du système. Sur Arch, c'est un `pacman -Syu` complet, que tu lances toi-même. Installer `nodejs` à côté d'un Node nvm laisse deux exécutables.
 
 ## Démarrage rapide
 
@@ -53,10 +59,12 @@ Le principe : **cumuler les quotas gratuits** de plusieurs fournisseurs cloud, e
 git clone https://github.com/goheakan/vb-optifree.git
 cd vb-optifree
 ./install.sh                 # installe LiteLLM, les configs, le plugin et les services user
-$EDITOR ~/.config/litellm/.env   # renseigne au moins une clé API gratuite
+$EDITOR ~/.config/litellm/.env   # une clé par fournisseur, voir docs/ajouter-une-cle.md
 systemctl --user restart litellm
 opencode
 ```
+
+Le pas à pas pour obtenir chaque clé, puis la ranger, est dans [docs/ajouter-une-cle.md](docs/ajouter-une-cle.md). La clé reste dans `~/.config/litellm/.env`. Elle ne va ni dans le dépôt, ni dans le chat.
 
 Puis, dans OpenCode :
 
@@ -64,17 +72,19 @@ Puis, dans OpenCode :
 /quota                 # dashboard des pools
 /quota check 12000     # pré-vol : 12k tokens estimés
 /quota policy          # rappel de la politique de routage
+/quote order           # affiche l'ordre des pools
+/quote order zen groq gemini deepseek
 ```
 
 ## Ce que fait `install.sh`
 
 - Vérifie les prérequis et **affiche** les commandes pacman/AUR manquantes (il ne lance jamais `sudo`).
-- Détecte le GPU (AMD / NVIDIA / CPU) et recommande la variante Ollama.
+- Affiche le GPU détecté. Il n'est pas requis : Ollama n'est pas dans le chemin courant.
 - Installe LiteLLM avec `uv tool install 'litellm[proxy]'`.
 - Copie les modèles de config dans `~/.config/litellm/` et `~/.config/opencode/` **sans écraser** un fichier existant (sauf `--force`).
 - Installe le plugin dans `~/.config/opencode/opencode-quota/`.
 - Fusionne le provider `litellm` et le plugin dans `~/.config/opencode/opencode.json` (via `jq`).
-- Installe et active les services **utilisateur** systemd (`litellm`, `ollama` si aucun service système).
+- Installe et active le service **utilisateur** systemd `litellm`. Il n'active pas `ollama`.
 - Lance `doctor.sh` à la fin.
 
 Options :
@@ -88,6 +98,8 @@ Options :
 ```
 
 ## GPU et Ollama
+
+Ollama et le GPU ne font pas partie du chemin courant. Le tableau reste là pour la suite, quand le projet tournera déjà sans modèle local.
 
 | Matériel | Paquet Ollama | Vérification |
 |---|---|---|
@@ -107,14 +119,18 @@ Le `install.sh` ne lance pas les commandes d'installation système : il les affi
 
 ## Politique de routage
 
-| Sensibilité | Alias OpenCode | Cible LiteLLM |
+| Ordre | Pool | Cible |
 |---|---|---|
-| 🔴 Secret / client / santé / juridique | `sensitive` | `local-coder` (Ollama uniquement, **aucun fallback cloud**) |
-| 🟡 Code public / questions générales | `default` | Groq gratuit → Gemini → DeepSeek → local |
-| 🔵 Gros contexte | `default` (ou `cloud`) | Gemini / DeepSeek 1M ctx |
-| 💰 Quotas épuisés | — | `deepseek-flash` (payant quasi-gratuit) → `local-coder` |
+| 1 | OpenCode Zen free | `opencode/deepseek-v4.1-flash-free` (sans clé, seulement dans OpenCode) |
+| 2 | Groq | `groq-120b` |
+| 3 | DeepSeek | `deepseek-flash`, payant |
+| 4 | Gemini Flash | `gemini-flash`, dernier de l'ordre par défaut |
 
-La règle d'or : **ne jamais envoyer un secret à un modèle cloud gratuit**. Les offres gratuites peuvent entraîner sur les données ou les conserver ; le local est la seule voie sûre.
+OpenRouter reste hors de cette chaîne tant qu'un identifiant `:free` réel n'est pas écrit dans la config. Une clé par fournisseur. Pas de second compte pour contourner une limite.
+
+L'alias `sensitive` et les modèles locaux attendent Ollama. Ils ne sont pas renvoyés vers un cloud gratuit.
+
+La règle d'or : **ne jamais envoyer un secret à un modèle cloud gratuit**. Les offres gratuites peuvent entraîner sur les données ou les conserver.
 
 ## Commandes du plugin `opencode-quota`
 
@@ -125,18 +141,25 @@ La règle d'or : **ne jamais envoyer un secret à un modèle cloud gratuit**. Le
 | `/quota check <tokens>` | pré-vol : OK / ⚠ / ⛔ selon le restant |
 | `/quota policy` | rappelle la politique de routage |
 | `/quota reset <pool>` | correction manuelle du ledger |
+| `/quota order` | affiche l'ordre, ou le change si des pools suivent |
+| `/quote order` | même action |
+| `/quote order groq deepseek gemini` | enregistre cet ordre |
 
-Le ledger est stocké dans `~/.local/state/vb-optifree/quotas.json`. Il n'est **jamais** versionné.
+Les pools acceptés sont `zen`, `groq`, `deepseek` et `gemini`, une fois chacun. L'ordre est écrit dans le ledger. Le choix avant l'envoi le suit tout de suite. La config LiteLLM installée est réécrite pour le repli sur un HTTP 503. Ce repli prend effet après `systemctl --user restart litellm`.
+
+Le ledger est stocké dans `~/.local/state/vb-optifree/quotas.json` et dans le stockage du plugin. Il n'est **jamais** versionné. Le plugin choisit le pool encore ouvert avant l'envoi, et avertit si le restant passe sous 20 %. Une bascule vers DeepSeek rappelle qu'il est payant.
 
 ## Banc d'essai Docker
-
-Tant que les étapes ne sont pas stables, on ne lance pas `./install.sh` sur la machine. Le banc est à part :
 
 ```bash
 ./docker/smoke.sh
 ```
 
-Il télécharge des images épinglées, lance Ollama et LiteLLM, joue les 12 tests du plugin, vérifie le routage `sensitive`, puis tout efface. Il ne monte pas `~/.config`, ne touche pas au service Ollama déjà présent, et ne publie le port `4000` que sur `127.0.0.1`. Aucun modèle n'est téléchargé : l'appel `sensitive` doit échouer côté Ollama, pas partir vers un cloud. Le GPU de la machine n'est pas passé aux conteneurs.
+Il télécharge des images épinglées, lance un faux cloud et LiteLLM, joue les tests du plugin, puis tout efface. Il ne démarre pas Ollama, ne monte pas `~/.config`, et ne publie le port `4000` que sur `127.0.0.1`. Le GPU n'est pas passé aux conteneurs.
+
+L'alias `default` suit Groq, puis DeepSeek, puis Gemini. Si les trois hops tombent, la requête échoue : il n'y a pas de repli local. Ces hops parlent à un serveur du réseau Docker, avec des clés créées au lancement et effacées à la sortie. Aucune requête de test ne part chez Groq, Google ou DeepSeek. OpenCode 1.19.5, dans le même banc, envoie son prompt à `litellm/default` sur `http://127.0.0.1:4000/v1`.
+
+La config de production reste `config/litellm.config.yaml`. Le fichier du banc est `docker/litellm.test.yaml`. Le repli de `default` est aussi déclaré sur l'alias : LiteLLM cherche la chaîne sur le nom demandé par le client. Un hop ne revient pas vers un pool déjà passé.
 
 ## Arborescence
 
@@ -163,14 +186,23 @@ vb-optifree/
 │   │   ├── ledger.ts
 │   │   ├── sources.ts
 │   │   ├── estimate.ts
+│   │   ├── route.ts
 │   │   └── commands.ts
 │   └── test/
-│       └── ledger.test.ts
+│       ├── ledger.test.ts
+│       ├── route.test.ts
+│       ├── security.test.ts
+│       └── store.test.ts
 ├── docker/
 │   ├── compose.yaml
-│   └── smoke.sh
+│   ├── smoke.sh
+│   ├── litellm.test.yaml
+│   ├── mock_upstream.mjs
+│   ├── Dockerfile.opencode
+│   └── opencode-entry.sh
 ├── docs/
 │   ├── plan.md
+│   ├── ajouter-une-cle.md
 │   └── initial-sketch.md
 └── .github/
     └── workflows/ci.yml
@@ -179,7 +211,7 @@ vb-optifree/
 ## Sécurité et vie privée
 
 - LiteLLM écoute uniquement sur `127.0.0.1`. `doctor.sh` échoue si LiteLLM
-  ou Ollama écoutent ailleurs.
+  ou Ollama écoutent ailleurs. Ollama lui-même n'est pas requis.
 - Les clés sont dans `~/.config/litellm/.env` (mode `600`), jamais dans le dépôt.
 - `scripts/check-litellm-env.sh` refuse le démarrage si ce fichier n'est pas
   en mode `600`, ou si la clé maître est vide, trop courte, ou encore un
@@ -208,7 +240,6 @@ vb-optifree/
 ./doctor.sh
 systemctl --user status litellm
 journalctl --user -u litellm -n 100
-curl -s http://127.0.0.1:11434/api/tags | jq
 ```
 
 ## Licence

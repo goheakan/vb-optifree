@@ -69,7 +69,7 @@ http_check() {
 }
 
 loopback_listener() {
-  local port="$1" label="$2"
+  local port="$1" label="$2" optional="${3:-}"
   if ! have ss; then
     warn "ss absent : écoute de $label non vérifiée"
     return 0
@@ -77,7 +77,11 @@ loopback_listener() {
   local lines
   lines="$(ss -H -ltn "sport = :${port}" 2>/dev/null || true)"
   if [ -z "$lines" ]; then
-    warn "$label n'écoute pas sur le port ${port}"
+    if [ "$optional" = "optional" ]; then
+      info "$label n'écoute pas sur le port ${port} (non requis)"
+    else
+      warn "$label n'écoute pas sur le port ${port}"
+    fi
     return 0
   fi
   local bad=0 line addr
@@ -106,7 +110,11 @@ check_command node
 check_command npm
 check_command jq
 check_command curl
-check_command ollama
+if have ollama; then
+  info "ollama présent, hors du chemin courant ($(command -v ollama))"
+else
+  info "ollama absent (optionnel, hors du chemin courant)"
+fi
 
 info "Installation"
 if [ -x "$HOME/.local/bin/litellm" ] || have litellm; then
@@ -202,12 +210,11 @@ if have systemctl && systemctl --user show-environment >/dev/null 2>&1; then
   else
     warn "litellm.service inactif"
   fi
-  if systemctl --user is-active --quiet ollama.service; then
-    pass "ollama.service (user) actif"
-  elif systemctl is-active --quiet ollama.service 2>/dev/null; then
-    pass "ollama.service (système) actif"
+  if systemctl --user is-active --quiet ollama.service 2>/dev/null \
+    || systemctl is-active --quiet ollama.service 2>/dev/null; then
+    info "ollama.service actif (hors du chemin courant)"
   else
-    warn "aucun service ollama actif"
+    info "ollama.service inactif (non requis)"
   fi
 else
   warn "systemd utilisateur indisponible"
@@ -215,15 +222,19 @@ fi
 
 info "Écoute réseau"
 loopback_listener 4000 "LiteLLM"
-loopback_listener 11434 "Ollama"
+loopback_listener 11434 "Ollama" optional
 
 info "Endpoints"
-http_check "$OLLAMA_URL/api/tags" "Ollama"
+if have ss && [ -n "$(ss -H -ltn 'sport = :11434' 2>/dev/null || true)" ]; then
+  http_check "$OLLAMA_URL/api/tags" "Ollama"
+else
+  info "Ollama non interrogé (il n'écoute pas, et il n'est pas requis)"
+fi
 MASTER_KEY=""
 if [ -f "$LITELLM_DIR/.env" ]; then
   MASTER_KEY="$(grep -E '^LITELLM_MASTER_KEY=' "$LITELLM_DIR/.env" | head -n1 | cut -d= -f2- || true)"
 fi
-http_check "$LITELLM_URL/health" "LiteLLM /health"
+http_check "$LITELLM_URL/health/liveliness" "LiteLLM /health/liveliness"
 if [ -n "$MASTER_KEY" ]; then
   http_check "$LITELLM_URL/v1/models" "LiteLLM /v1/models" "$MASTER_KEY"
 else

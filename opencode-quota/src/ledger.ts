@@ -36,6 +36,8 @@ export interface Pool {
   reset_at?: string;
   source?: string;
   status?: PoolStatus;
+  /** Bloque le pool jusqu'au reset, même sans limite chiffrée (réponse 429). */
+  forced_status?: PoolStatus;
   notes?: string;
 }
 
@@ -54,6 +56,8 @@ export interface Ledger {
   updated_at: string;
   pools: Record<string, Pool>;
   history?: HistoryEntry[];
+  /** Ordre des pools. Absent = zen, groq, deepseek, gemini. */
+  route?: string[];
 }
 
 export function nowIso(date: Date = new Date()): string {
@@ -65,6 +69,13 @@ export function emptyLedger(date: Date = new Date()): Ledger {
     version: 1,
     updated_at: nowIso(date),
     pools: {
+      zen: {
+        type: "requests",
+        limits: {},
+        used: { requests_today: 0 },
+        source: "local",
+        notes: "OpenCode Zen free. Pas de plafond inventé : le statut reste inconnu jusqu'à un 429.",
+      },
       groq: {
         type: "rpm_rpd_tpm_tpd",
         limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 },
@@ -76,24 +87,27 @@ export function emptyLedger(date: Date = new Date()): Ledger {
         limits: {},
         used: { requests_today: 0 },
         source: "manual",
+        notes: "Pas de plafond RPD tant qu'un en-tête ou un 429 ne l'a pas donné.",
+      },
+      deepseek: {
+        type: "paid",
+        limits: {},
+        used: { requests_today: 0 },
+        source: "manual",
+        notes: "Payant. Dans l'ordre par défaut, il passe avant Gemini.",
       },
       openrouter: {
         type: "credit",
         limits: { credits_usd: 0 },
         used: { credits_usd: 0 },
         source: "api:/api/v1/key",
+        notes: "Hors chaîne tant qu'un identifiant :free réel n'est pas fixé.",
       },
       litellm: {
         type: "spend",
         limits: {},
         used: { spend_usd: 0 },
         source: "api:/key/info",
-      },
-      ollama: {
-        type: "unlimited",
-        used: {},
-        source: "local",
-        status: "ok",
       },
     },
     history: [],
@@ -145,6 +159,7 @@ export function remainingPercent(pool: Pool): number | null {
  * unknown (aucune limite connue).
  */
 export function statusFor(pool: Pool): PoolStatus {
+  if (pool.forced_status === "blocked") return "blocked";
   const used = usageRatio(pool);
   if (used === null) return "unknown";
   if (used >= 0.95) return "blocked";
@@ -168,6 +183,7 @@ export function resetIfNeeded(ledger: Ledger, now: Date = new Date()): Ledger {
       ...pool,
       used: {},
       reset_at: undefined,
+      forced_status: undefined,
       status: "ok",
     };
   }
@@ -245,7 +261,7 @@ export function formatDashboard(ledger: Ledger): string {
   );
   lines.push("-".repeat(72));
 
-  const order = ["groq", "gemini", "openrouter", "litellm", "ollama"];
+  const order = ["zen", "groq", "deepseek", "gemini", "openrouter", "litellm"];
   const ids = [
     ...order.filter((id) => id in ledger.pools),
     ...Object.keys(ledger.pools).filter((id) => !order.includes(id)),
@@ -316,4 +332,72 @@ export function preflight(ledger: Ledger, tokens: number): {
     message: `OK pour ${tokens} tokens. Pools candidats : ${candidates.join(", ")}.`,
     candidates,
   };
+}
+
+export interface HttpObservation {
+  status: number;
+  usage: PoolUsed;
+  reset_at?: string;
+}
+
+/**
+ * En-têtes chiffrés : remplace la consommation, sans l'additionner.
+ * HTTP 200 sans en-tête : une requête de plus.
+ * HTTP 429 : pool bloqué jusqu'au reset fourni, sinon 24 h.
+ */
+export function noteHttpResult(
+  ledger: Ledger,
+  poolId: string,
+  observation: HttpObservation,
+  now: Date = new Date(),
+): Ledger {
+  const pool = ledger.pools[poolId];
+  if (!pool) return ledger;
+
+  if (observation.status === 429) {
+    const existing = pool.reset_at && Date.parse(pool.reset_at) > now.getTime() ? pool.reset_at : undefined;
+    const reset =
+      observation.reset_at ?? existing ?? new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const next: Pool = {
+      ...pool,
+      forced_status: "blocked",
+      reset_at: reset,
+      source: "http:429",
+    };
+    next.status = statusFor(next);
+    return {
+      ...ledger,
+      updated_at: nowIso(now),
+      pools: { ...ledger.pools, [poolId]: next },
+    };
+  }
+
+  if (observation.status < 200 || observation.status >= 300) return ledger;
+
+  const hasAbsolute =
+    observation.usage.requests_today !== undefined || observation.usage.tokens_today !== undefined;
+  if (hasAbsolute) {
+    const next: Pool = {
+      ...pool,
+      used: { ...(pool.used ?? {}), ...observation.usage },
+      reset_at: observation.reset_at ?? pool.reset_at,
+      forced_status: undefined,
+      source: "headers",
+    };
+    next.status = statusFor(next);
+    return {
+      ...ledger,
+      updated_at: nowIso(now),
+      pools: { ...ledger.pools, [poolId]: next },
+    };
+  }
+
+  const cleared: Ledger = {
+    ...ledger,
+    pools: {
+      ...ledger.pools,
+      [poolId]: { ...pool, forced_status: undefined },
+    },
+  };
+  return addUsage(cleared, poolId, { requests_today: 1 }, undefined, now);
 }

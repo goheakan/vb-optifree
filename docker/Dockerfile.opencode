@@ -1,0 +1,11 @@
+FROM node@sha256:539d4d5b9c0df96bb9d1229264d358dc816e8592cb8867828a580b527e7ad0fa
+
+RUN npm install -g opencode-ai@1.19.5 && npm cache clean --force
+
+COPY opencode-entry.sh /usr/local/bin/opencode-entry
+RUN chmod 755 /usr/local/bin/opencode-entry
+
+USER node
+WORKDIR /work
+ENV HOME=/tmp/oc-home
+ENTRYPOINT ["opencode-entry"]

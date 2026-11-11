@@ -232,7 +232,9 @@ check_prerequisites() {
   have git   || print_system_hint "git"   "sudo pacman -S git"
   have jq    || print_system_hint "jq"    "sudo pacman -S jq"
   have curl  || print_system_hint "curl"  "sudo pacman -S curl"
-  have ollama || print_system_hint "ollama" "voir la section GPU du README (ollama / ollama-rocm / ollama-cuda)"
+  if ! have ollama; then
+    log "ollama est absent : il n'est pas requis pour le chemin courant"
+  fi
 
   if [ "$missing_required" -eq 1 ]; then
     err "Installe les prérequis ci-dessus puis relance ./install.sh"
@@ -319,6 +321,8 @@ merge_opencode_config() {
         --arg plugin "$PLUGIN_DIR" '
         .provider = (.provider // {}) |
         .provider.litellm = $tpl[0].provider.litellm |
+        (if (.model == null or .model == "") then .model = $tpl[0].model else . end) |
+        (if (.small_model == null or .small_model == "") then .small_model = $tpl[0].small_model else . end) |
         (if env.VB_LITELLM_KEY != "" then .provider.litellm.options.apiKey = env.VB_LITELLM_KEY else . end) |
         .plugins = (((.plugins // []) | map(select(. != "./opencode-quota" and . != $plugin))) + [$plugin] | unique)
       ' "$cfg" > "$tmp"; then
@@ -368,13 +372,7 @@ install_services() {
   run mkdir -p "$SYSTEMD_DIR"
   run cp "$REPO_DIR/systemd/litellm.service" "$SYSTEMD_DIR/litellm.service"
   ok "écrit : $SYSTEMD_DIR/litellm.service"
-
-  if ! systemctl list-unit-files --no-legend ollama.service 2>/dev/null | grep -q .; then
-    run cp "$REPO_DIR/systemd/ollama.service" "$SYSTEMD_DIR/ollama.service"
-    ok "écrit : $SYSTEMD_DIR/ollama.service"
-  else
-    warn "un service ollama système existe déjà : unité utilisateur non installée."
-  fi
+  log "ollama.service n'est pas installé : Ollama est hors du chemin courant"
 
   if [ "$DRY_RUN" -eq 1 ]; then
     printf '[dry-run] systemctl --user daemon-reload\n'
@@ -393,14 +391,6 @@ install_services() {
   else
     warn "échec de l'activation de litellm.service ; voir : journalctl --user -u litellm"
   fi
-
-  if [ -f "$SYSTEMD_DIR/ollama.service" ] && have ollama; then
-    if systemctl --user enable --now ollama.service 2>/dev/null; then
-      ok "ollama.service (user) activé"
-    else
-      warn "ollama.service (user) non activé (port déjà utilisé ou service système)."
-    fi
-  fi
 }
 
 run_doctor() {
@@ -417,7 +407,7 @@ run_doctor() {
 main() {
   printf 'vb-optifree %s — installation\n' "$VERSION"
   printf 'dépôt : %s\n' "$REPO_DIR"
-  printf 'GPU détecté : %s\n' "$(detect_gpu)"
+  printf 'GPU détecté (non requis) : %s\n' "$(detect_gpu)"
 
   check_prerequisites
   install_litellm
@@ -432,20 +422,29 @@ main() {
   cat <<EOF
 
 Prochaines étapes :
-  1. Édite ~/.config/litellm/.env et renseigne au moins une clé :
-       GROQ_API_KEY=...
-       GEMINI_API_KEY=...
-       OPENROUTER_API_KEY=...
-  2. Redémarre la passerelle :
+  1. Sans modèle déjà choisi, le défaut est un modèle gratuit OpenCode Zen. Il ne demande pas de clé.
+     Un modèle déjà écrit dans opencode.json est conservé.
+  2. Pour allonger le quota, ajoute une clé par fournisseur.
+     Le pas à pas est dans docs/ajouter-une-cle.md.
+     Le fichier est ~/.config/litellm/.env, en mode 600 :
+       GROQ_API_KEY=
+       DEEPSEEK_API_KEY=
+       GEMINI_API_KEY=
+     Laisse OPENROUTER_API_KEY vide tant qu'un identifiant :free réel n'est pas écrit dans la config.
+  3. Redémarre la passerelle :
        systemctl --user restart litellm
-  3. Vérifie :
+  4. Vérifie :
        ./doctor.sh
-  4. Lance OpenCode :
+  5. Lance OpenCode :
        opencode
-  5. Dans OpenCode :
+  6. Dans OpenCode :
        /quota
+       /quote order
+     Le plugin choisit le pool encore ouvert avant l'envoi.
+     L'ordre par défaut après Zen est Groq, DeepSeek, puis Gemini.
+  Ollama et le GPU restent hors de ce chemin.
 
-Documentation : README.md et docs/plan.md
+Documentation : README.md, docs/ajouter-une-cle.md et docs/plan.md
 EOF
 }
 

@@ -1133,21 +1133,98 @@ Décision : les étapes se valident dans Docker. `./install.sh` sur la machine
 attend que ce banc soit stable. Les étapes d'après (npm, hooks manquants,
 vibe-coding réel) attendent aussi.
 
-`./docker/smoke.sh` a été exécuté une fois avec succès :
+`./docker/smoke.sh` a réussi avec les quatre contrôles demandés, dans la
+même exécution :
 
 - 12 tests du plugin dans `node:22` (image épinglée, sources en lecture seule) ;
-- LiteLLM `v1.108.5` non-root et Ollama, images épinglées par digest ;
+- LiteLLM `v1.108.5` non-root, Ollama et OpenCode `1.19.5`, images épinglées ;
 - clé générée pour le banc, refusée si elle ne passe pas `check-litellm-env.sh`,
-  effacée à la sortie ;
+  effacée à la sortie avec les clés cloud de test ;
 - `127.0.0.1:4000` seulement ; l'Ollama de l'hôte sur `11434` n'est pas repris ;
 - `/v1/models` sans clé : 401 ; avec la clé : alias `local-coder` et `sensitive` ;
-- un appel `sensitive` répond HTTP 404 côté Ollama (modèle non téléchargé) et
-  ne cite aucun hôte cloud ;
-- la clé et le prompt de test sont absents des journaux ;
-- conteneurs, volume et fichier de clé supprimés à la fin.
+- `qwen2.5-coder:0.5b` est téléchargé dans le volume du banc. L'alias
+  `sensitive` répond HTTP 200 avec du texte, et le faux cloud n'est pas touché ;
+- l'alias `default` suit Groq, puis Gemini, puis DeepSeek, puis le modèle
+  local. Les trois hops cloud sont un serveur Node du réseau Docker. Une
+  panne de Groq s'arrête sur Gemini. Les trois en panne finissent sur le
+  modèle local. Aucune requête ne part chez Groq, Google ou DeepSeek ;
+- OpenCode 1.19.5 (`provider` au singulier, paquet `@ai-sdk/openai-compatible`)
+  obtient un texte via `http://127.0.0.1:4000/v1`. Le mot exact n'est pas
+  exigé : `0.5b` ne le produit pas de façon stable ;
+- la clé et le prompt de test sont absents des journaux des conteneurs ;
+- conteneurs, volume et fichiers de clé supprimés à la fin.
 
-Hors de ce banc : téléchargement d'un modèle, GPU, OpenCode, clés cloud, et
-installation sur la machine.
+Le repli de `default` est déclaré sur l'alias, dans le fichier du banc et
+dans `config/litellm.config.yaml`. LiteLLM cherche la chaîne sur le nom
+demandé par le client, pas seulement sur `groq-120b`.
+
+Limites mesurées : OpenCode partage l'espace réseau d'Ollama, qui a une
+sortie pour télécharger le modèle. Le test montre que la complétion ne
+touche pas le faux cloud. Il ne prouve pas l'absence de route vers Internet.
+`cap_drop: ALL` et le système de fichiers en lecture seule ont suffi pour
+OpenCode. Le GPU n'est pas passé aux conteneurs. `./install.sh` n'a pas
+été lancé.
+
+## 23. Suite — quota gratuit d'abord (11 nov. 2026)
+
+Ollama n'est plus dans le chemin courant. Le projet doit d'abord offrir
+la plus longue durée de quota gratuit, puis fonctionner sans modèle local.
+Ollama, le GPU et l'alias `sensitive` viennent après.
+
+1. Fait. La chaîne `default` est Groq, puis Gemini, puis DeepSeek. Elle ne
+   finit plus sur `local-coder`. Les modèles locaux sont commentés pour que
+   LiteLLM démarre sans rien sur le port 11434. Gemini ne revient pas vers Groq.
+2. Fait pour Zen, Groq et Gemini. DeepSeek reste le plan B payant.
+   OpenRouter reste hors chaîne : aucun identifiant `:free` n'a été vérifié
+   le jour de ce changement. Une clé par fournisseur.
+3. Fait. `chooseModel` choisit le pool encore ouvert avant l'envoi.
+   `unknown` reste utilisable. Un modèle hors chaîne, y compris `sensitive`,
+   n'est pas renvoyé vers un cloud.
+4. Fait. Le ledger va dans `ctx.storage` et dans le fichier local. Un 429
+   bloque le pool. Le délai utilisé est `retryAfterMs` quand il est annoncé,
+   sinon 24 h. Un second 429 sans délai ne rallonge pas un reset plus court.
+   Les en-têtes remplacent la consommation. Un HTTP 200 sans en-tête compte
+   une requête. `/quota` affiche le prochain modèle.
+5. Fait. `./docker/smoke.sh` se termine sans service Ollama. Groq répond
+   `FROM-GROQ`, la panne de Groq passe à Gemini, les trois hops en panne
+   répondent HTTP 503. OpenCode 1.19.5 du banc obtient `FROM-GROQ` via
+   `litellm/default` sur `127.0.0.1:4000`. Les clés de test sont effacées.
+6. Fait. `install.sh` n'installe ni n'active `ollama.service`. Le GPU est
+   affiché et non requis. `doctor.sh` ne fait plus échouer l'absence
+   d'Ollama. LiteLLM écoute sur `127.0.0.1:4000`.
+7. Partiel. Un appel réel au modèle `opencode/deepseek-v4.1-flash-free`,
+   depuis un répertoire vide, a reçu HTTP 429 « Free usage limit reached ».
+   Aucun paiement, aucun passage par Ollama. Le plugin a marqué le pool
+   `zen` bloqué jusqu'au délai annoncé. Aucune clé Groq, Gemini ou DeepSeek
+   n'était renseignée : le repli payant n'a pas été appelé.
+8. Après ce fonctionnement : publication npm, `gitleaks` local, relecture
+   des CGU et de la télémétrie des free tiers, puis Ollama.
+
+## 24. Ordre Groq, DeepSeek, Gemini (11 nov. 2026)
+
+L'ordre demandé pour la passerelle est Groq, puis DeepSeek, puis Gemini.
+Zen reste le premier choix tant qu'il est dans l'ordre. DeepSeek est
+payant et passe maintenant avant Gemini. Un hop ne revient pas en arrière.
+
+`/quote order` affiche cet ordre, ou l'enregistre. `/quota order` fait la
+même chose. Les noms acceptés sont `zen`, `groq`, `deepseek` et `gemini`,
+une fois chacun. L'ordre est dans le ledger. Le choix avant l'envoi le
+suit tout de suite. La commande réécrit l'alias et les replis de la config
+LiteLLM installée. Le repli sur un HTTP 503 suit ce fichier après
+`systemctl --user restart litellm`.
+
+Le pas à pas d'une clé fournisseur est dans `docs/ajouter-une-cle.md`.
+Il commence par la création du compte et de la clé chez Groq, DeepSeek
+et Gemini, puis le rangement dans `~/.config/litellm/.env`.
+OpenRouter reste vide.
+
+Node du terminal : nvm, branche 22, en 22.23.5 depuis le 11 nov. 2026.
+Le plugin demande 22.19 ou plus. Cette exigence est couverte.
+
+Le banc `./docker/smoke.sh` confirme cet ordre : Groq répond, une panne de
+Groq passe à DeepSeek, les trois hops en panne répondent HTTP 503.
+OpenCode du banc obtient encore la réponse du premier hop. 27 tests du
+plugin passent. Rien n'est commité.
 
 ## Annexe — sources consultées (11 nov. 2026)
 

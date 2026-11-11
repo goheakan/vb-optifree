@@ -1,0 +1,52 @@
+# Config du banc seulement. Le fichier de production reste config/litellm.config.yaml.
+#
+# Aucun modèle local : le banc ne démarre pas Ollama. Les trois hops cloud
+# pointent vers le mock du banc (http://mock:8080). Aucune requête de test ne
+# part chez Groq, Google ou DeepSeek. Les clés sont des jetons générés au
+# lancement, jamais versionnés.
+
+model_list:
+  - model_name: groq-120b
+    litellm_params:
+      model: openai/gpt-oss-120b
+      api_base: http://mock:8080/groq/v1
+      api_key: os.environ/GROQ_API_KEY
+  - model_name: gemini-flash
+    litellm_params:
+      model: openai/gemini-flash
+      api_base: http://mock:8080/gemini/v1
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: deepseek-flash
+    litellm_params:
+      model: openai/deepseek-chat
+      api_base: http://mock:8080/deepseek/v1
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 0
+  timeout: 60
+  allowed_fails: 1
+  cooldown_time: 0
+
+  # LiteLLM cherche la chaîne sur le nom demandé par le client. L'alias
+  # default doit donc avoir la sienne, en plus de groq-120b.
+  # Ordre : Groq, puis DeepSeek, puis Gemini. Pas de retour en arrière.
+  model_group_alias:
+    default: groq-120b
+
+  fallbacks:
+    - default: ["deepseek-flash", "gemini-flash"]
+    - groq-120b: ["deepseek-flash", "gemini-flash"]
+    - deepseek-flash: ["gemini-flash"]
+
+litellm_settings:
+  turn_off_message_logging: true
+  redact_user_api_key_info: true
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_prompts_in_spend_logs: false
+  trusted_proxy_ranges: []

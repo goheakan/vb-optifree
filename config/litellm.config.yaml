@@ -5,15 +5,18 @@
 # aux modèles gratuits disponibles au moment de l'installation.
 
 model_list:
-  # --- Local (privé, aucun cloud) ---
-  - model_name: local-coder
-    litellm_params:
-      model: ollama/qwen2.5-coder:14b
-      api_base: http://127.0.0.1:11434
-  - model_name: local-fast
-    litellm_params:
-      model: ollama/qwen2.5-coder:7b
-      api_base: http://127.0.0.1:11434
+  # Ollama n'est pas dans le chemin courant. Les entrées locales restent
+  # commentées pour que la passerelle démarre sans rien sur le port 11434.
+  # Elles reviendront avec l'alias sensitive, qui ne doit jamais partir
+  # vers un cloud gratuit.
+  # - model_name: local-coder
+  #   litellm_params:
+  #     model: ollama/qwen2.5-coder:14b
+  #     api_base: http://127.0.0.1:11434
+  # - model_name: local-fast
+  #   litellm_params:
+  #     model: ollama/qwen2.5-coder:7b
+  #     api_base: http://127.0.0.1:11434
 
   # --- Cloud gratuit (non sensible) ---
   - model_name: groq-120b
@@ -32,7 +35,7 @@ model_list:
   #     model: openrouter/<provider>/<model>:free
   #     api_key: os.environ/OPENROUTER_API_KEY
 
-  # --- Fallback payant quasi-gratuit ---
+  # Payant. L'ordre par défaut le place avant Gemini.
   - model_name: deepseek-flash
     litellm_params:
       model: deepseek/deepseek-chat
@@ -45,17 +48,20 @@ router_settings:
   allowed_fails: 3
   cooldown_time: 30
 
-  # Alias utilisés par OpenCode.
-  # sensitive = local uniquement. local-coder et local-fast n'ont
-  # volontairement aucune entrée de fallback : une requête locale ne
-  # doit pas être rejouée vers un fournisseur cloud.
+  # Alias utilisé par OpenCode quand la session vise LiteLLM.
+  # Zen n'est pas un modèle LiteLLM : OpenCode le choisit avant cette passerelle.
+  # sensitive reviendra avec Ollama. Il n'a pas d'alias ici, pour qu'un
+  # secret ne soit pas renvoyé vers Groq, DeepSeek ou Gemini.
+  # Ordre de cette passerelle : Groq, puis DeepSeek, puis Gemini.
+  # /quote order réécrit le bloc ci-dessous dans la config installée.
   model_group_alias:
     default: groq-120b
-    sensitive: local-coder
 
+  # Repli sans retour en arrière, dans l'ordre choisi.
   fallbacks:
-    - groq-120b: ["gemini-flash", "deepseek-flash", "local-coder"]
-    - gemini-flash: ["groq-120b", "deepseek-flash", "local-coder"]
+    - default: ["deepseek-flash", "gemini-flash"]
+    - groq-120b: ["deepseek-flash", "gemini-flash"]
+    - deepseek-flash: ["gemini-flash"]
 
 litellm_settings:
   turn_off_message_logging: true

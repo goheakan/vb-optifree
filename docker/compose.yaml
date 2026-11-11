@@ -1,46 +1,46 @@
-# Banc d'essai. Il ne monte aucun dossier de la machine (ni ~/.config, ni les
-# modèles Ollama déjà installés). Le port publié sur l'hôte est 127.0.0.1:4000.
+# Banc d'essai. Il ne monte aucun dossier de la machine (ni ~/.config, ni un
+# service Ollama). Le port publié sur l'hôte est 127.0.0.1:4000.
 #
-# Ollama reste sur 127.0.0.1 à l'intérieur du conteneur : LiteLLM partage son
-# espace réseau et lui parle en 127.0.0.1:11434, comme le fichier de config
-# du dépôt. Ce port n'est pas publié sur l'hôte (l'Ollama de la machine
-# occupe déjà 11434).
-#
-# LiteLLM écoute 0.0.0.0 dans cet espace réseau parce que le relais Docker
+# LiteLLM écoute 0.0.0.0 dans son espace réseau parce que le relais Docker
 # n'atteint pas une écoute limitée à 127.0.0.1. La publication hôte reste
-# 127.0.0.1, donc le LAN ne voit pas le port.
+# 127.0.0.1, donc le LAN ne voit pas le port. OpenCode partage cet espace
+# réseau et parle à LiteLLM en http://127.0.0.1:4000.
+#
+# Les hops cloud du fichier de test vont vers le service mock, jamais vers
+# Internet. Le mock n'a pas de port publié.
 #
 # Images épinglées le 2026-11-11 (linux/amd64) :
 #   ghcr.io/berriai/litellm-non_root:v1.108.5
-#   ollama/ollama:latest à cette date
+#   node:22-bookworm
+#   opencode-ai 1.19.5, construit par docker/Dockerfile.opencode
 
 name: vb-optifree-test
 
 services:
-  ollama:
-    image: ollama/ollama@sha256:a372a1c0d1e15b68e9521189785c3ca17795c26c2356f8b1b10122cfb59ed0d7
-    environment:
-      OLLAMA_HOST: 127.0.0.1:11434
-    ports:
-      - "127.0.0.1:4000:4000"
-    mem_limit: 2g
-    pids_limit: 256
+  mock:
+    image: node@sha256:539d4d5b9c0df96bb9d1229264d358dc816e8592cb8867828a580b527e7ad0fa
+    command: ["node", "/opt/mock/mock_upstream.mjs"]
+    env_file:
+      - run/.env
+    volumes:
+      - ./mock_upstream.mjs:/opt/mock/mock_upstream.mjs:ro
+    mem_limit: 256m
+    pids_limit: 64
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    volumes:
-      - ollama-data:/root/.ollama
 
   litellm:
     image: ghcr.io/berriai/litellm-non_root@sha256:c83beb208285cee441c29abda606f572c40971156ef4f0880ff2bca301b94448
-    network_mode: service:ollama
     depends_on:
-      - ollama
+      - mock
+    ports:
+      - "127.0.0.1:4000:4000"
     env_file:
       - run/.env
     volumes:
-      - ../config/litellm.config.yaml:/app/config.yaml:ro
+      - ./litellm.test.yaml:/app/config.yaml:ro
     command:
       - --config
       - /app/config.yaml
@@ -55,5 +55,21 @@ services:
     cap_drop:
       - ALL
 
-volumes:
-  ollama-data:
+  opencode:
+    profiles: ["opencode"]
+    image: vb-optifree-opencode:1.19.5
+    build:
+      context: .
+      dockerfile: Dockerfile.opencode
+    network_mode: service:litellm
+    env_file:
+      - run/opencode.env
+    mem_limit: 2g
+    pids_limit: 256
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

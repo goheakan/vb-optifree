@@ -24,7 +24,7 @@
     "opencode-plugin",
     "quota",
     "litellm",
-    "ollama",
+    "zen",
     "vibe-coding"
   ],
   "dependencies": {
