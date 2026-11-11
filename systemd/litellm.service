@@ -1,0 +1,19 @@
+[Unit]
+Description=LiteLLM proxy (vb-optifree)
+Documentation=https://github.com/goheakan/vb-optifree
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/litellm/.env
+ExecStart=%h/.local/bin/litellm --config %h/.config/litellm/config.yaml --host 127.0.0.1 --port 4000
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

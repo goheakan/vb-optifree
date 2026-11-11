@@ -1,0 +1,33 @@
+# NOTICE
+
+`vb-optifree` s'appuie sur des composants tiers. Ce fichier rappelle leurs
+licences ; il ne remplace pas les licences originales.
+
+## Composants principaux
+
+| Composant | Rôle | Licence | Source |
+|---|---|---|---|
+| OpenCode | CLI agent | MIT | https://github.com/anomalyco/opencode |
+| LiteLLM | passerelle LLM | MIT | https://github.com/BerriAI/litellm |
+| Ollama | runtime local | MIT | https://github.com/ollama/ollama |
+
+## Modèles et services cloud
+
+Les modèles (Groq, Google Gemini, OpenRouter, DeepSeek, Ollama Hub, etc.) et
+les services qui les hébergent ont leurs propres licences, conditions
+d'utilisation et politiques de confidentialité. Ils ne sont pas couverts par
+la licence MIT de ce dépôt.
+
+En particulier :
+
+- Les offres gratuites peuvent entraîner sur les données, les conserver ou
+  les utiliser pour améliorer leurs produits. Vérifie les conditions de chaque
+  fournisseur avant d'envoyer du code propriétaire.
+- Les modèles locaux Ollama restent sur ta machine ; leur licence dépend du
+  modèle téléchargé (Apache-2.0, MIT, Llama Community License, etc.).
+- DeepSeek et les autres APIs payantes sont facturées selon leurs tarifs.
+
+## Plugins et outils
+
+Le plugin `opencode-quota` est distribué sous MIT avec ce dépôt. Il utilise
+l'API plugin d'OpenCode, également sous MIT.

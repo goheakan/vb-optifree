@@ -1,0 +1,46 @@
+{
+  "name": "opencode-quota",
+  "version": "0.1.0",
+  "description": "Quota dashboard and pre-flight checks for OpenCode + LiteLLM",
+  "type": "module",
+  "license": "MIT",
+  "author": "vb-optifree contributors",
+  "homepage": "https://github.com/goheakan/vb-optifree",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/goheakan/vb-optifree.git",
+    "directory": "opencode-quota"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "quota",
+    "litellm",
+    "ollama",
+    "vibe-coding"
+  ],
+  "dependencies": {
+    "@opencode/plugin": "^2.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

@@ -1,0 +1,31 @@
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+*.local
+
+# Données d'exécution
+quotas.json
+*.log
+*.bak
+
+# Scripts de session personnels
+opencode_session.sh
+grok_session.sh
+
+# Node
+node_modules/
+dist/
+coverage/
+npm-debug.log*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Divers
+.DS_Store
+.cache/
+.idea/
+.vscode/

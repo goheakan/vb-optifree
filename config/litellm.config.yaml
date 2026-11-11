@@ -1,0 +1,66 @@
+# vb-optifree — configuration LiteLLM
+# Documentation : https://docs.litellm.ai/docs/proxy/configs
+#
+# Les identifiants de modèles doivent être ajustés à la version de LiteLLM et
+# aux modèles gratuits disponibles au moment de l'installation.
+
+model_list:
+  # --- Local (privé, aucun cloud) ---
+  - model_name: local-coder
+    litellm_params:
+      model: ollama/qwen2.5-coder:14b
+      api_base: http://127.0.0.1:11434
+  - model_name: local-fast
+    litellm_params:
+      model: ollama/qwen2.5-coder:7b
+      api_base: http://127.0.0.1:11434
+
+  # --- Cloud gratuit (non sensible) ---
+  - model_name: groq-120b
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-3.8-flash
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: openrouter-free
+    litellm_params:
+      # Remplace <provider>/<model> par un modèle :free disponible.
+      # Exemple : openrouter/qwen/qwen3-coder:free
+      model: openrouter/<provider>/<model>:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # --- Fallback payant quasi-gratuit ---
+  - model_name: deepseek-flash
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 60
+  allowed_fails: 3
+  cooldown_time: 30
+
+  # Alias utilisés par OpenCode.
+  # sensitive = local uniquement : aucun fallback cloud n'est défini pour
+  # local-coder, donc une requête sensible ne peut pas partir sur Internet.
+  model_group_alias:
+    default: groq-120b
+    sensitive: local-coder
+
+  fallbacks:
+    - groq-120b: ["gemini-flash", "openrouter-free", "deepseek-flash", "local-coder"]
+    - gemini-flash: ["groq-120b", "openrouter-free", "deepseek-flash", "local-coder"]
+    - openrouter-free: ["gemini-flash", "groq-120b", "deepseek-flash", "local-coder"]
+
+litellm_settings:
+  turn_off_message_logging: true
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # database_url: os.environ/LITELLM_DATABASE_URL   # optionnel : spend persistant
